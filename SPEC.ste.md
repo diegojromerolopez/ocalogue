@@ -1,145 +1,72 @@
-# `ocalogue` Technical Specification and Architecture
+# ocalogue Specification
 
-`ocalogue` is a high-performance, purely functional **Datalog Deductive Logic and Relational Query Engine**. It uses **OCaml 5.x** and the **Dune** build system.
+## 1. Product
 
-The name combines **OCaml** and **Datalog** (*dialogue in logic*). `ocalogue` implements a complete first-order relational logic engine. It provides **Semi-Naive Bottom-Up Fixpoint Evaluation**, **Stratified Negation**, **Relational Indexing**, and an **Interactive REPL and Batch CLI**. The engine must pass the **Official Datalog Test Suite**.
+Build `ocalogue`, a pure OCaml 5.x Datalog engine with Dune.
+The engine computes the least fixed point of facts and rules.
+Declaration order must not change the result.
 
----
+Use immutable `Set` and `Map` values in core evaluation.
+Do not use mutable state in AST, unification, stratification, or evaluation.
+Use tail recursion where practical.
 
-## 1. Core Mathematical Invariants and Logic Rules
+## 2. Required Repository Layout
 
-> [!IMPORTANT]
-> **RULE 1: DECLARATIVE SEMANTICS AND LEAST FIXED POINT (LFP)**
-> Datalog execution computes the unique **Minimal Herbrand Model** (Least Fixed Point) from the input rules and ground facts.
-> The declaration order of facts and rules in source files MUST NOT change the final set of derived tuples.
+Create these files and directories:
 
-> [!IMPORTANT]
-> **RULE 2: SEMI-NAIVE FIXPOINT EVALUATION (DIFFERENTIAL JOINS)**
-> Naive bottom-up evaluation repeatedly joins known facts. This operation has factorial time complexity.
-> The evaluation engine MUST implement **Semi-Naive Evaluation**. During each iteration $k$, at least one body atom in a recursive rule MUST use a *newly derived differential tuple* ($\Delta R_{k-1}$). This requirement prevents duplicate join computations.
-
-> [!IMPORTANT]
-> **RULE 3: STRATIFIED NEGATION AND SAFETY**
-> Permit negation (`not atom(...)`) only when the program is **stratifiable**:
-> - Construct a Predicate Dependency Graph $G = (V, E)$. An edge $p \to q$ means that rule head $p$ depends on body atom $q$.
-> - Mark directed edges through `not` as **negative edges**.
-> - Accept the program if and only if it contains **NO directed cycles with a negative edge**.
-> - Partition rules into topological strata $S_0, S_1, \dots, S_n$. Evaluate stratum $S_i$ to a complete fixpoint before computing stratum $S_{i+1}$.
-> - Reject every program with a negative cycle. Return this error: `NON_STRATIFIED_NEGATION`.
-
-> [!IMPORTANT]
-> **RULE 4: TERM SAFETY AND FINITE TERMINATION GUARANTEE**
-> Require every variable in a rule head or in a negated or comparison body literal to also occur in at least one positive relational body atom (Safety Condition).
-> This condition guarantees strictly finite derived models and polynomial-time query termination.
-
-> [!IMPORTANT]
-> **RULE 5: IDIOMATIC OCAML AND PURELY FUNCTIONAL ARCHITECTURE**
-> Implement the core AST, Unification, Semi-Naive loop, and Stratification modules with immutable data structures. Use persistent `Set`, `Map`, Algebraic Data Types, Tail Recursion, and Functors. Do not use imperative side effects in core evaluation algorithms.
-
-### 1.1 Minimal Project Skeleton (Walking Skeleton Priority for US-001)
-The first user story (`roadmap/US-001.md`) MUST establish a runnable minimal walking skeleton:
-1. Create `dune-project` and `dune` build files.
-2. Create `lib/ast.ml` with minimal term, atom, fact, and rule AST type definitions.
-3. Create `bin/main.ml` with a basic CLI executable. Make it accept an input file and exit with code 0.
-4. Create unit tests in `test/test_ocalogue.ml`. Make sure that `dune runtest` compiles cleanly and passes.
-Subsequent stories must implement the lexer/parser, semi-naive fixpoint loop, stratification, and full test suite verification.
-
----
-
-## 2. Datalog Grammar and Lexical Specification
-
-### 2.1 Lexical Tokens
-* **Variables**: Use identifiers that start with an uppercase letter or underscore (for example, `X`, `Target`, `_`).
-* **Atoms / Symbols**: Use identifiers that start with a lowercase letter (for example, `edge`, `path`, `alice`, `true`).
-* **Strings**: Use double-quoted strings (for example, `"Engineering"`, `"Homer"`).
-* **Integers**: Use signed 64-bit integer literals (for example, `0`, `42`, `-10`).
-* **Operators**:
-  * `:-` (Rule implication / "if")
-  * `?-` (Query prefix)
-  * `not` (Stratified negation)
-  * `,` (Logical conjunction / AND)
-  * `.` (Clause terminator)
-  * Comparison operators: `=`, `!=`, `<`, `<=`, `>`, `>=`
-* **Comments**: Support single-line `%` or `//` comments and multi-line `/* ... */` comments.
-
-### 2.2 EBNF Syntax Grammar
-```ebnf
-program         ::= statement* EOF ;
-statement       ::= fact | rule | query ;
-
-fact            ::= atom "." ;
-rule            ::= atom ":-" literal ("," literal)* "." ;
-query           ::= "?-" literal ("," literal)* "." ;
-
-literal         ::= ["not"] atom | comparison ;
-comparison      ::= term comp_op term ;
-comp_op         ::= "=" | "!=" | "<" | "<=" | ">" | ">=" ;
-
-atom            ::= PREDICATE "(" [ term ("," term)* ] ")" ;
-term            ::= VARIABLE | CONSTANT | WILDCARD ;
-CONSTANT        ::= SYMBOL | STRING | INTEGER ;
+```text
+dune-project
+Makefile
+lib/dune
+lib/ast.ml
+lib/types.ml
+lib/relation.ml
+lib/unification.ml
+lib/stratify.ml
+lib/semi_naive.ml
+lib/engine.ml
+lib/lexer.ml or lib/lexer.mll
+lib/parser.ml or lib/parser.mly
+bin/dune
+bin/main.ml
+test/dune
+test/test_ocalogue.ml
+test/test_ast.ml
+test/test_lexer.ml
+test/test_parser.ml
+test/test_unification.ml
+test/test_stratification.ml
+test/test_semi_naive.ml
+test/test_engine.ml
+test/test_official_suite.ml
+test_suite/01_transitive_closure.dl
+test_suite/02_same_generation.dl
+test_suite/03_stratified_negation.dl
+test_suite/04_mutual_recursion.dl
+test_suite/05_cyclic_termination.dl
+test_suite/06_unification_filters.dl
+test_suite/07_unstratified_negation_error.dl
 ```
 
----
+Keep each file responsible for one module or test area.
+Do not create a monolithic source or test file.
+Keep `bin/main.ml` as a thin wrapper.
 
-## 3. Package and Directory Layout (OCaml / Dune)
+## 3. AST Contract
 
-```
-ocalogue/
-├── dune-project
-├── Makefile
-├── Dockerfile
-├── test_suite/                                 # Official Datalog Test Fixtures
-│   ├── 01_transitive_closure.dl
-│   ├── 02_same_generation.dl
-│   ├── 03_stratified_negation.dl
-│   ├── 04_mutual_recursion.dl
-│   ├── 05_cyclic_termination.dl
-│   ├── 06_unification_filters.dl
-│   └── 07_unstratified_negation_error.dl
-├── bin/
-│   ├── dune
-│   └── main.ml                                 # CLI & Interactive REPL entrypoint
-├── lib/
-│   ├── dune
-│   ├── ast.ml                                  # AST type definitions & pretty printers
-│   ├── lexer.mll (or hand-written lexer)       # OCamllex tokenizer
-│   ├── parser.mly (or Menhir / recursive descent)# Grammar parser
-│   ├── types.ml                                # Symbol, Term, Tuple, Relation types
-│   ├── relation.ml                             # Indexed relational store (Set/Map functors)
-│   ├── unification.ml                          # Pattern matching & substitution bindings
-│   ├── stratify.ml                             # Dependency graph cycle detection & strata
-│   ├── semi_naive.ml                           # Semi-naive fixpoint evaluation engine
-│   └── engine.ml                               # Top-level Datalog solver & Query runner
-└── test/
-    ├── dune
-    ├── test_ast.ml
-    ├── test_unification.ml
-    ├── test_stratification.ml
-    ├── test_semi_naive.ml
-    └── test_official_suite.ml                  # Runs all test_suite/*.dl test cases
-```
-
----
-
-## 4. Domain Data Types (AST and Engine)
+Use these types, with `Int64` for integer values:
 
 ```ocaml
-(* lib/ast.ml *)
 type symbol = string
 
 type term =
   | Var of string
   | ConstString of string
-  | ConstInt of int
+  | ConstInt of int64
   | ConstSymbol of symbol
   | Wildcard
 
-type atom = {
-  predicate: symbol;
-  args: term list;
-}
-
+type atom = { predicate: symbol; args: term list }
 type comp_op = Eq | Neq | Lt | Le | Gt | Ge
 
 type literal =
@@ -155,164 +82,157 @@ type clause =
 type program = clause list
 ```
 
----
+A variable starts with an uppercase letter or underscore.
+A single underscore creates a wildcard term.
+A named underscore identifier remains a variable only when it has more characters.
+A symbol starts with a lowercase letter and continues with lowercase letters, digits, or underscores.
+A string uses double quotes and supports escaped double quotes and backslashes.
+An integer uses a signed 64-bit decimal range.
+Reject integer overflow.
 
-## 5. Semi-Naive Evaluation Algorithm
+## 4. Grammar and Comments
 
-### 5.1 Relational Store and Differential Representation
-For each intensional database (IDB) predicate $P$, maintain three sets:
-1. $R[P]$: Full accumulated relation set.
-2. $\Delta R[P]$: Tuples newly discovered in iteration $k-1$.
-3. $\Delta R_{\text{next}}[P]$: Tuples discovered in current iteration $k$.
+Implement this grammar:
 
-### 5.2 Semi-Naive Step Loop
-```
-For each stratum S_i from 0 to N:
-  Initialize R[P] = EDB facts for all P in S_i
-  Initialize ΔR[P] = R[P]
-  
-  Repeat until all ΔR[P] are empty:
-    Initialize all ΔR_next[P] = empty
-    
-    For each rule: Head :- Body_1, Body_2, ..., Body_m in S_i:
-      For each j from 1 to m:
-        // Evaluate rule using ΔR for Body_j and R for other positive body atoms:
-        Join: Body_1(R) ⋈ ... ⋈ Body_j(ΔR) ⋈ ... ⋈ Body_m(R) ⋈ NegatedAtoms(R_prev_strata)
-        For each derived tuple t:
-          If t ∉ R[Head] and t ∉ ΔR_next[Head]:
-            Add t to ΔR_next[Head]
-            
-    For each predicate P in S_i:
-      R[P] = R[P] ∪ ΔR_next[P]
-      ΔR[P] = ΔR_next[P]
+```ebnf
+program         ::= statement* EOF ;
+statement       ::= fact | rule | query ;
+fact            ::= atom "." ;
+rule            ::= atom ":-" literal ("," literal)* "." ;
+query           ::= "?-" literal ("," literal)* "." ;
+literal         ::= ["not"] atom | comparison ;
+comparison      ::= term comp_op term ;
+comp_op         ::= "=" | "!=" | "<" | "<=" | ">" | ">=" ;
+atom            ::= PREDICATE "(" [term ("," term)*] ")" ;
+term            ::= VARIABLE | CONSTANT | WILDCARD ;
 ```
 
----
+Support `%`, `//`, and `/* ... */` comments.
+Reject unterminated block comments and strings.
+Report line and column for lexical and parse errors.
 
-## 6. Command-Line Interface (CLI) and REPL
+## 5. Semantic Rules
 
-### 6.1 Batch Execution (`ocalogue run`)
-```bash
-# Run a Datalog file and evaluate queries contained within
-ocalogue run test_suite/01_transitive_closure.dl
+Require every head variable, negated-atom variable, and comparison variable to occur in a positive relational atom.
+Reject unsafe rules with error prefix `ERROR: UNSAFE_RULE`.
 
-# Run a file with an ad-hoc query from command line
-ocalogue run test_suite/01_transitive_closure.dl -q "path(a, Target)"
+Reject inconsistent predicate arity with error prefix `ERROR: ARITY_MISMATCH`.
+Reject invalid comparisons with error prefix `ERROR: INVALID_COMPARISON`.
+Equality may compare terms of the same value type.
+Ordering comparisons apply only to two integers or two strings.
+Return false for an equality involving different value types.
 
-# Output JSON structured results
-ocalogue run test_suite/01_transitive_closure.dl -q "path(a, Target)" --format=json
+Build a dependency graph from each head predicate to each body predicate.
+Mark negated edges as negative.
+Reject every directed cycle containing a negative edge.
+Return error text beginning with `ERROR: NON_STRATIFIED_NEGATION`.
+Exit with status 1 for this error.
+
+Evaluate strata in topological order.
+Complete one stratum before starting the next.
+Use semi-naive evaluation for recursive positive rules.
+Each recursive round must use one differential relation for each positive body position in turn.
+Store full, current differential, and next differential relations as immutable values.
+Stop when every next differential relation is empty.
+
+Set semantics remove duplicate tuples.
+Sort displayed tuples by predicate name and then lexicographic term order.
+Sort query bindings by their complete displayed binding.
+
+## 6. CLI Contract
+
+Build an executable named `ocalogue`.
+Use these commands:
+
+```text
+ocalogue run FILE
+ocalogue run FILE -q "QUERY"
+ocalogue run FILE -q "QUERY" --format=text
+ocalogue run FILE -q "QUERY" --format=json
+ocalogue test DIRECTORY
+ocalogue repl
+ocalogue --help
 ```
 
-**Standard Text Output Format:**
-```
-path(a, b)
-path(a, c)
-path(a, d)
-path(a, e)
-```
+`run` evaluates queries in the file.
+The `-q` option evaluates one additional query.
+The default format is `text`.
+Accept only `text` and `json` formats.
 
-**JSON Output Format:**
+Print text bindings as one tuple per line.
+Print no result lines when the result set is empty.
+Print JSON in this exact shape:
+
 ```json
-{
-  "query": "path(a, Target)",
-  "bindings": [
-    {"Target": "b"},
-    {"Target": "c"},
-    {"Target": "d"},
-    {"Target": "e"}
-  ],
-  "count": 4
-}
+{"query":"path(a, Target)","bindings":[{"Target":"b"}],"count":1}
 ```
 
-### 6.2 Official Test Suite Runner (`ocalogue test`)
-```bash
-# Run the official test set
-ocalogue test test_suite/
-```
-Output:
-```
-[PASS] 01_transitive_closure.dl (4 derived tuples)
-[PASS] 02_same_generation.dl (3 derived tuples)
-[PASS] 03_stratified_negation.dl (1 derived tuple)
-[PASS] 04_mutual_recursion.dl (3 derived tuples)
-[PASS] 05_cyclic_termination.dl (3 derived tuples)
-[PASS] 06_unification_filters.dl (2 derived tuples)
-[PASS] 07_unstratified_negation_error.dl (Properly rejected with NON_STRATIFIED_NEGATION)
+Emit compact JSON with escaped strings.
+Use `count: 0` for an empty result.
 
-All 7 official Datalog test cases passed (100% success rate).
-```
+Print errors to stderr.
+Use error prefixes `ERROR: LEXER`, `ERROR: PARSER`, `ERROR: IO`, `ERROR: UNSAFE_RULE`, `ERROR: ARITY_MISMATCH`, `ERROR: INVALID_COMPARISON`, and `ERROR: NON_STRATIFIED_NEGATION`.
+Use exit status 0 for success, 1 for program or evaluation errors, and 2 for CLI usage errors.
+Do not print stack traces during normal CLI errors.
 
-### 6.3 Interactive REPL (`ocalogue repl`)
-```
-ocalogue Datalog REPL v1.0.0
-Type .help for commands, or enter facts, rules, and queries.
+## 7. REPL Contract
 
-ocalogue> .load test_suite/01_transitive_closure.dl
-Loaded 4 facts, 2 rules.
+Start with prompt `ocalogue> `.
+Support `.help`, `.load FILE`, and `.quit`.
+Accept facts, rules, and queries.
+Keep asserted facts in the current in-memory session.
+Recompute results after each assertion.
+Print `Fact asserted: ...` after a valid fact.
+Print `Loaded N facts, M rules.` after a valid load.
+Print `Goodbye.` for `.quit`.
+Print errors with the same `ERROR:` prefixes.
 
-ocalogue> ?- path(a, X).
-+--------+
-| X      |
-+--------+
-| b      |
-| c      |
-| d      |
-| e      |
-+--------+
-4 tuples found.
+## 8. Official Fixtures
 
-ocalogue> edge(e, f).
-Fact asserted: edge(e, f).
+Create and run seven fixtures.
+Verify these outcomes:
 
-ocalogue> ?- path(a, X).
-+--------+
-| X      |
-+--------+
-| b      |
-| c      |
-| d      |
-| e      |
-| f      |
-+--------+
-5 tuples found.
+1. Transitive closure returns four paths from `a` to `e`.
+2. Same generation returns the three specified tuples.
+3. Stratified negation returns `unreachable(1, 4)`.
+4. Mutual recursion returns `even(0)`, `even(2)`, and `even(4)`.
+5. Cyclic input terminates and returns the three specified connected tuples.
+6. Salary comparison returns Alice and Dave in Engineering.
+7. The negative cycle fails with `ERROR: NON_STRATIFIED_NEGATION` and exit status 1.
 
-ocalogue> .quit
+## 9. Build and Test Commands
+
+Create these Makefile targets:
+
+```text
+build: dune build
+ test: dune runtest
+ e2e: dune runtest
+ lint: dune build @check
+ format: dune fmt
+ clean: dune clean
 ```
 
----
+The `test` target must return status 1 when zero tests run.
+The `e2e` target must execute real CLI scenarios for every command, flag, format, and official fixture.
+Do not use `docker-compose`; this project does not require Docker services.
+Do not mask errors with `|| true`, `set +e`, or equivalent shell constructs.
 
-## 7. Official Validation Test Set Details
+## 10. Testing Rules
 
-The engine MUST correctly evaluate all 7 official test scenarios in `test_suite/`:
+Use real immutable domain values in Chicago-school tests.
+Use in-memory stores and injected test doubles for external boundaries.
+Do not use network services or external databases.
+Each feature needs unit, integration, and black-box CLI coverage.
+Each black-box process needs a maximum two-second timeout.
+Assert exit status, stdout, stderr, ordering, and exact JSON fields.
+Reject tautological tests and empty test bodies.
+Ask whether a script can generate structured fixtures more reliably than manual editing.
 
-1. **`01_transitive_closure.dl`**: Prove reachability over the linear graph $a \to b \to c \to d \to e$. Expected: `path(a, b)`, `path(a, c)`, `path(a, d)`, `path(a, e)`.
-2. **`02_same_generation.dl`**: Prove recursive cousin resolution over the family tree. Expected: `same_generation(ann, ann)`, `same_generation(ann, bill)`, `same_generation(ann, pat)`.
-3. **`03_stratified_negation.dl`**: Prove complementary set computation with `not reachable(X, Y)`. Expected: `unreachable(1, 4)`.
-4. **`04_mutual_recursion.dl`**: Prove even and odd mutual recursive derivation across successor chains. Expected: `even(0)`, `even(2)`, `even(4)`.
-5. **`05_cyclic_termination.dl`**: Prove termination without infinite loops on cyclic graphs ($x \to y \to z \to x$). Expected: `connected(x, x)`, `connected(x, y)`, `connected(x, z)`.
-6. **`06_unification_filters.dl`**: Prove relational joins and arithmetic comparisons (`Salary >= 100000`). Expected: `high_earner_dept("Alice", "Engineering")`, `high_earner_dept("Dave", "Engineering")`.
-7. **`07_unstratified_negation_error.dl`**: Prove rejection of unstratifiable loops (`p(X) :- q(X), not p(X)`). Expected: Exit code 1 / Stratification error.
+## 11. Forbidden Practices
 
----
-
-## 8. Makefile and Build Discipline
-
-```makefile
-.PHONY: build test lint format clean
-
-build:
-	dune build
-
-test:
-	dune runtest
-
-lint:
-	dune build @check 2>/dev/null || dune build
-
-format:
-	dune fmt 2>/dev/null || true
-
-clean:
-	dune clean
-```
+Do not add mutable core evaluation state.
+Do not add external runtime dependencies without approval.
+Do not add placeholder functions, `pass`, ellipses, `NotImplementedError`, or empty handlers.
+Do not suppress compiler, test, or shell failures.
+Do not require linter perfection before the final hardening story.
