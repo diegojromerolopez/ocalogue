@@ -1,0 +1,4 @@
+(test
+ (name test_ocalogue)
+ (modules test_ocalogue)
+ (libraries ocalogue_lib))
